@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.77seventy77.CDGPlayer</id>
+  <name>CDG Player</name>
+  <summary>CD+G and CD+EG karaoke disc player</summary>
+  <description>
+    <p>
+      A karaoke disc player supporting CD+G and CD+EG formats.
+      Plays disc images from .cue/.bin files as well as ZIP and 7z archives.
+      Supports MKV export with AV1 video and FLAC audio.
+      CD+EG support based on hcs64's decoder (used with permission).
+    </p>
+  </description>
+  <metadata_license>MIT</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <url type="homepage">https://github.com/77seventy77/cdg-player</url>
+  <url type="bugtracker">https://github.com/77seventy77/cdg-player/issues</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Player</category>
+  </categories>
+  <releases>
+    <release version="1.0.0" date="2026-04-11"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

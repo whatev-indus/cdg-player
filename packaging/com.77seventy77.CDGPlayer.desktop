@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=CDG Player
+Comment=CD+G and CD+EG karaoke disc player
+Exec=cdg-player
+Icon=com.77seventy77.CDGPlayer
+Type=Application
+Categories=AudioVideo;Player;

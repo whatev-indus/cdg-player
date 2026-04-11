@@ -1,0 +1,38 @@
+app-id: com.77seventy77.CDGPlayer
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: cdg-player
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --filesystem=home
+  - --device=dri
+
+modules:
+  - name: cdg-player
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/cdg-player/cargo
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml
+      - cargo --offline build --release
+      - install -Dm755 target/release/cdg-player /app/bin/cdg-player
+      - install -Dm644 packaging/com.77seventy77.CDGPlayer.desktop
+          /app/share/applications/com.77seventy77.CDGPlayer.desktop
+      - install -Dm644 packaging/com.77seventy77.CDGPlayer.metainfo.xml
+          /app/share/metainfo/com.77seventy77.CDGPlayer.metainfo.xml
+      - install -Dm644 "Logo/CDG Logo.png"
+          /app/share/icons/hicolor/512x512/apps/com.77seventy77.CDGPlayer.png
+    sources:
+      - type: dir
+        path: ..
+      - generated-sources.json

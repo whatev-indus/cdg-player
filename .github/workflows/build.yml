@@ -132,11 +132,44 @@ jobs:
           name: CDG-Player-Windows
           path: CDG-Player-Windows.zip
 
+  # ── Linux (Flatpak) ───────────────────────────────────────────────────────────
+  build-flatpak:
+    name: Linux (Flatpak)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub/flatpak-builder-lint:latest
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        run: |
+          apt-get update -q
+          apt-get install -y python3 python3-aiohttp python3-toml curl
+
+      - name: Generate Cargo sources
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py \
+            -o flatpak-cargo-generator.py
+          python3 flatpak-cargo-generator.py Cargo.lock -o packaging/generated-sources.json
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: CDG-Player-Linux.flatpak
+          manifest-path: packaging/com.77seventy77.CDGPlayer.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: CDG-Player-Linux
+          path: CDG-Player-Linux.flatpak
+
   # ── Release (tag pushes only) ─────────────────────────────────────────────────
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-macos, build-windows]
+    needs: [build-macos, build-windows, build-flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -150,6 +183,10 @@ jobs:
         with:
           name: CDG-Player-Windows
 
+      - uses: actions/download-artifact@v4.2.1
+        with:
+          name: CDG-Player-Linux
+
       - name: Create GitHub Release
         run: |
           gh release delete "${{ github.ref_name }}" \
@@ -160,6 +197,7 @@ jobs:
             --title "CDG Player ${{ github.ref_name }}" \
             --generate-notes \
             "CDG-Player-macOS.zip" \
-            "CDG-Player-Windows.zip"
+            "CDG-Player-Windows.zip" \
+            "CDG-Player-Linux.flatpak"
         env:
           GH_TOKEN: ${{ github.token }}
