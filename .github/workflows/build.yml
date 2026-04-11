@@ -136,16 +136,20 @@ jobs:
   build-flatpak:
     name: Linux (Flatpak)
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub/flatpak-builder-lint:latest
 
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Install dependencies
+      - name: Install flatpak tools and Python deps
         run: |
-          apt-get update -q
-          apt-get install -y python3 python3-aiohttp python3-toml curl
+          sudo apt-get update -q
+          sudo apt-get install -y flatpak flatpak-builder python3 python3-pip
+          pip3 install --user aiohttp toml
+
+      - name: Add Flathub remote
+        run: |
+          sudo flatpak remote-add --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Generate Cargo sources
         run: |
