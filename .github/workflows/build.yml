@@ -13,7 +13,7 @@ jobs:
   # ── macOS (Universal: ARM + x86_64) ──────────────────────────────────────────
   build-macos:
     name: macOS (Universal)
-    runs-on: macos-14          # Apple Silicon runner
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v4
@@ -45,34 +45,38 @@ jobs:
           cp cdg-player-universal "$APP/Contents/MacOS/cdg-player"
           chmod +x "$APP/Contents/MacOS/cdg-player"
 
-          cat > "$APP/Contents/Info.plist" << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>cdg-player</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.77seventy77.cdg-player</string>
-  <key>CFBundleName</key>
-  <string>CDG Player</string>
-  <key>CFBundleDisplayName</key>
-  <string>CDG Player</string>
-  <key>CFBundleVersion</key>
-  <string>1.0</string>
-  <key>CFBundleShortVersionString</key>
-  <string>1.0</string>
-  <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>LSMinimumSystemVersion</key>
-  <string>11.0</string>
-</dict>
-</plist>
-PLIST
+          python3 - "$APP/Contents/Info.plist" << 'PYEOF'
+          import sys
+          path = sys.argv[1]
+          content = """<?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>cdg-player</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.77seventy77.cdg-player</string>
+            <key>CFBundleName</key>
+            <string>CDG Player</string>
+            <key>CFBundleDisplayName</key>
+            <string>CDG Player</string>
+            <key>CFBundleVersion</key>
+            <string>1.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+          </dict>
+          </plist>
+          """
+          open(path, 'w').write('\n'.join(line.lstrip() for line in content.strip().splitlines()))
+          PYEOF
 
-          # Convert CDG Logo.png → AppIcon.icns
+          # Convert CDG Logo.png to AppIcon.icns
           mkdir -p AppIcon.iconset
           sips -z 16   16   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_16x16.png
           sips -z 32   32   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_16x16@2x.png
