@@ -9,7 +9,11 @@ dirs = "5"
 eframe = "0.31"
 egui = "0.31"
 hound = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.15"
 rodio = { version = "0.19", default-features = false, features = ["wav"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sevenz-rust2 = { version = "0.20", default-features = false }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"

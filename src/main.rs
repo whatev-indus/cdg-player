@@ -768,11 +768,21 @@ fn extract_disc_7z(path: &Path) -> Result<(PathBuf, PathBuf), String> {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+fn app_icon() -> egui::IconData {
+    let bytes = include_bytes!("../Logo/CDG Logo.png");
+    let img   = image::load_from_memory(bytes)
+        .expect("CDG Logo.png is a valid PNG")
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    egui::IconData { rgba: img.into_raw(), width, height }
+}
+
 fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("CD+G Player")
-            .with_inner_size([WIDTH as f32 * 2.0, HEIGHT as f32 * 2.0 + 48.0]),
+            .with_inner_size([WIDTH as f32 * 2.0, HEIGHT as f32 * 2.0 + 48.0])
+            .with_icon(std::sync::Arc::new(app_icon())),
         ..Default::default()
     };
     eframe::run_native(
