@@ -10,19 +10,31 @@ on:
 
 jobs:
 
-  # ── macOS ARM (Apple Silicon) ─────────────────────────────────────────────────
+  # ── macOS (Universal: ARM + x86_64) ──────────────────────────────────────────
   build-macos:
-    name: macOS (ARM)
-    runs-on: macos-14          # macos-14 is Apple Silicon (arm64)
+    name: macOS (Universal)
+    runs-on: macos-14          # Apple Silicon runner
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
 
-      - name: Build
+      - name: Build arm64
         run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/aarch64-apple-darwin/release/cdg-player \
+            target/x86_64-apple-darwin/release/cdg-player \
+            -output cdg-player-universal
 
       - name: Build .app bundle
         run: |
@@ -30,34 +42,35 @@ jobs:
           mkdir -p "$APP/Contents/MacOS"
           mkdir -p "$APP/Contents/Resources"
 
-          cp target/aarch64-apple-darwin/release/cdg-player "$APP/Contents/MacOS/cdg-player"
+          cp cdg-player-universal "$APP/Contents/MacOS/cdg-player"
+          chmod +x "$APP/Contents/MacOS/cdg-player"
 
           cat > "$APP/Contents/Info.plist" << 'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key>
-            <string>cdg-player</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.77seventy77.cdg-player</string>
-            <key>CFBundleName</key>
-            <string>CDG Player</string>
-            <key>CFBundleDisplayName</key>
-            <string>CDG Player</string>
-            <key>CFBundleVersion</key>
-            <string>1.0</string>
-            <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
-            <key>CFBundleIconFile</key>
-            <string>AppIcon</string>
-            <key>NSHighResolutionCapable</key>
-            <true/>
-            <key>LSMinimumSystemVersion</key>
-            <string>11.0</string>
-          </dict>
-          </plist>
-          PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>cdg-player</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.77seventy77.cdg-player</string>
+  <key>CFBundleName</key>
+  <string>CDG Player</string>
+  <key>CFBundleDisplayName</key>
+  <string>CDG Player</string>
+  <key>CFBundleVersion</key>
+  <string>1.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+</dict>
+</plist>
+PLIST
 
           # Convert CDG Logo.png → AppIcon.icns
           mkdir -p AppIcon.iconset
@@ -73,13 +86,16 @@ jobs:
           sips -z 1024 1024 "Logo/CDG Logo.png" --out AppIcon.iconset/icon_512x512@2x.png
           iconutil -c icns AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 
+      - name: Ad-hoc code sign
+        run: codesign --deep --force --sign - "CDG Player.app"
+
       - name: Package
-        run: zip -r "CDG-Player-macOS-ARM.zip" "CDG Player.app"
+        run: zip -r "CDG-Player-macOS.zip" "CDG Player.app"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CDG-Player-macOS-ARM
-          path: CDG-Player-macOS-ARM.zip
+          name: CDG-Player-macOS
+          path: CDG-Player-macOS.zip
 
   # ── Windows ───────────────────────────────────────────────────────────────────
   build-windows:
@@ -121,7 +137,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: CDG-Player-macOS-ARM
+          name: CDG-Player-macOS
 
       - uses: actions/download-artifact@v4
         with:
@@ -133,7 +149,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "CDG Player ${{ github.ref_name }}" \
             --generate-notes \
-            "CDG-Player-macOS-ARM.zip" \
+            "CDG-Player-macOS.zip" \
             "CDG-Player-Windows.zip"
         env:
           GH_TOKEN: ${{ github.token }}
