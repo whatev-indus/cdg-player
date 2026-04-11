@@ -774,7 +774,31 @@ fn app_icon() -> egui::IconData {
         .expect("CDG Logo.png is a valid PNG")
         .into_rgba8();
     let (width, height) = img.dimensions();
-    egui::IconData { rgba: img.into_raw(), width, height }
+    let mut rgba = img.into_raw();
+
+    // Apply a squircle mask matching the macOS Dock icon shape.
+    // Corner radius is ~22.5% of the icon width (Apple HIG standard).
+    let r   = width as f32 * 0.225;
+    let cx  = width  as f32 / 2.0;
+    let cy  = height as f32 / 2.0;
+    for y in 0..height {
+        for x in 0..width {
+            let ax = (x as f32 - cx + 0.5).abs();
+            let ay = (y as f32 - cy + 0.5).abs();
+            let inside = if ax <= cx - r || ay <= cy - r {
+                true
+            } else {
+                let dx = ax - (cx - r);
+                let dy = ay - (cy - r);
+                dx * dx + dy * dy <= r * r
+            };
+            if !inside {
+                rgba[((y * width + x) * 4 + 3) as usize] = 0;
+            }
+        }
+    }
+
+    egui::IconData { rgba, width, height }
 }
 
 fn main() {
