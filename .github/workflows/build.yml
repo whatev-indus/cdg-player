@@ -144,7 +144,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y flatpak flatpak-builder python3 python3-pip
-          pip3 install --user aiohttp toml
+          pip3 install --user aiohttp toml tomlkit
 
       - name: Add Flathub remote
         run: |
