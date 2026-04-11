@@ -149,7 +149,7 @@ jobs:
           sudo apt-get install -y \
             libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libssl-dev libasound2-dev \
-            fuse libfuse2
+            fuse libfuse2 imagemagick
 
       - name: Build
         run: cargo build --release
@@ -161,6 +161,9 @@ jobs:
             -o linuxdeploy
           chmod +x linuxdeploy
 
+          # Resize icon to 512x512 (linuxdeploy requires a standard resolution)
+          convert "Logo/CDG Logo.png" -resize 512x512 icon-512.png
+
           # Set up AppDir structure
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/applications
@@ -168,13 +171,13 @@ jobs:
 
           cp target/release/cdg-player AppDir/usr/bin/cdg-player
           cp packaging/com.77seventy77.CDGPlayer.desktop AppDir/usr/share/applications/
-          cp "Logo/CDG Logo.png" AppDir/usr/share/icons/hicolor/512x512/apps/com.77seventy77.CDGPlayer.png
+          cp icon-512.png AppDir/usr/share/icons/hicolor/512x512/apps/com.77seventy77.CDGPlayer.png
 
           # Create AppImage
           ARCH=x86_64 ./linuxdeploy \
             --appdir AppDir \
             --desktop-file AppDir/usr/share/applications/com.77seventy77.CDGPlayer.desktop \
-            --icon-file "Logo/CDG Logo.png" \
+            --icon-file icon-512.png \
             --output appimage
 
           mv CDG_Player-*.AppImage CDG-Player-Linux.AppImage
