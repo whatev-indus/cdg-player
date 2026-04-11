@@ -3,37 +3,26 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
 
 jobs:
 
-  # ── macOS (universal binary: arm64 + x86_64) ─────────────────────────────────
+  # ── macOS ARM (Apple Silicon) ─────────────────────────────────────────────────
   build-macos:
-    name: macOS (Universal)
-    runs-on: macos-14
+    name: macOS (ARM)
+    runs-on: macos-14          # macos-14 is Apple Silicon (arm64)
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
 
-      - name: Build arm64
+      - name: Build
         run: cargo build --release --target aarch64-apple-darwin
-
-      - name: Build x86_64
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: Create universal binary
-        run: |
-          lipo -create \
-            target/aarch64-apple-darwin/release/cdg-player \
-            target/x86_64-apple-darwin/release/cdg-player \
-            -output cdg-player-universal
 
       - name: Build .app bundle
         run: |
@@ -41,7 +30,7 @@ jobs:
           mkdir -p "$APP/Contents/MacOS"
           mkdir -p "$APP/Contents/Resources"
 
-          cp cdg-player-universal "$APP/Contents/MacOS/cdg-player"
+          cp target/aarch64-apple-darwin/release/cdg-player "$APP/Contents/MacOS/cdg-player"
 
           cat > "$APP/Contents/Info.plist" << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -70,7 +59,7 @@ jobs:
           </plist>
           PLIST
 
-          # Build .icns from Logo/CDG Logo.png using sips + iconutil
+          # Convert CDG Logo.png → AppIcon.icns
           mkdir -p AppIcon.iconset
           sips -z 16   16   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_16x16.png
           sips -z 32   32   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_16x16@2x.png
@@ -85,12 +74,12 @@ jobs:
           iconutil -c icns AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 
       - name: Package
-        run: zip -r "CDG-Player-macOS.zip" "CDG Player.app"
+        run: zip -r "CDG-Player-macOS-ARM.zip" "CDG Player.app"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CDG-Player-macOS
-          path: CDG-Player-macOS.zip
+          name: CDG-Player-macOS-ARM
+          path: CDG-Player-macOS-ARM.zip
 
   # ── Windows ───────────────────────────────────────────────────────────────────
   build-windows:
@@ -119,3 +108,32 @@ jobs:
         with:
           name: CDG-Player-Windows
           path: CDG-Player-Windows.zip
+
+  # ── Release (tag pushes only) ─────────────────────────────────────────────────
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CDG-Player-macOS-ARM
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: CDG-Player-Windows
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "CDG Player ${{ github.ref_name }}" \
+            --generate-notes \
+            "CDG-Player-macOS-ARM.zip" \
+            "CDG-Player-Windows.zip"
+        env:
+          GH_TOKEN: ${{ github.token }}
