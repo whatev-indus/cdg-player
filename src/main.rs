@@ -265,7 +265,17 @@ impl App {
         }
 
         let cdg = cue_path.with_extension("cdg");
-        let cdg_path = if cdg.exists() { Some(cdg) } else { None };
+        let cdg_path = if cdg.exists() {
+            Some(cdg)
+        } else {
+            // CDG file name doesn't match the cue — find any .cdg in the same folder.
+            cue_path.parent().and_then(|dir| {
+                std::fs::read_dir(dir).ok()?.flatten().find(|e| {
+                    e.path().extension().and_then(|x| x.to_str())
+                        .map_or(false, |x| x.eq_ignore_ascii_case("cdg"))
+                }).map(|e| e.path())
+            })
+        };
 
         self.cdg_path = cdg_path;
         self.tracks = cue::parse_cue(&cue_path);
@@ -610,16 +620,17 @@ impl eframe::App for App {
                                         })
                                         .collect();
                                     for (title, source) in entries {
-                                        let title_text = title.clone();
-                                        let resp = ui.add(
+                                        let avail_w = ui.available_width();
+                                        let resp = ui.add_sized(
+                                            [avail_w, 28.0],
                                             egui::Button::new(
-                                                egui::RichText::new(&title_text)
+                                                egui::RichText::new(&title)
                                                     .size(15.0)
                                                     .color(egui::Color32::WHITE),
                                             )
                                             .fill(egui::Color32::TRANSPARENT)
                                             .frame(false)
-                                            .min_size(egui::vec2(300.0, 28.0)),
+                                            .wrap_mode(egui::TextWrapMode::Truncate),
                                         );
                                         if resp.hovered() {
                                             ui.painter().rect_filled(
