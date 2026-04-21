@@ -21,6 +21,9 @@ pub struct Screen {
     /// Color indices, one byte per pixel (values 0-15).
     pub pixels: Box<[u8; WIDTH * HEIGHT]>,
     pub palette: Palette,
+    /// Border color index — rendered over the border zone at display time only.
+    /// Never written into `pixels` so tile data drawn in the border survives scrolling.
+    pub border_color: u8,
     /// Sub-tile horizontal display offset (0-5 px), set by scroll commands.
     pub h_offset: i8,
     /// Sub-tile vertical display offset (0-11 px), set by scroll commands.
@@ -30,10 +33,11 @@ pub struct Screen {
 impl Screen {
     pub fn new() -> Self {
         Self {
-            pixels:   Box::new([0u8; WIDTH * HEIGHT]),
-            palette:  [0u32; 16],
-            h_offset: 0,
-            v_offset: 0,
+            pixels:       Box::new([0u8; WIDTH * HEIGHT]),
+            palette:      [0u32; 16],
+            border_color: 0,
+            h_offset:     0,
+            v_offset:     0,
         }
     }
 
@@ -53,15 +57,24 @@ impl Screen {
     }
 
     /// Render the plane to a 32-bit 0x00RRGGBB framebuffer, applying scroll offsets.
+    /// The border zone is always filled with `border_color`; pixel buffer data there
+    /// is preserved so it scrolls into the interior correctly.
     pub fn render(&self, out: &mut [u32]) {
-        let hoff = self.h_offset as isize;
-        let voff = self.v_offset as isize;
+        let hoff      = self.h_offset as isize;
+        let voff      = self.v_offset as isize;
+        let border_rgb = self.palette[self.border_color as usize];
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
-                let sx = (x as isize - hoff).rem_euclid(WIDTH as isize) as usize;
-                let sy = (y as isize - voff).rem_euclid(HEIGHT as isize) as usize;
-                let idx = self.pixels[sy * WIDTH + sx] as usize;
-                out[y * WIDTH + x] = self.palette[idx];
+                if y < BORDER_Y || y >= HEIGHT - BORDER_Y
+                    || x < BORDER_X || x >= WIDTH - BORDER_X
+                {
+                    out[y * WIDTH + x] = border_rgb;
+                } else {
+                    let sx  = (x as isize - hoff).rem_euclid(WIDTH  as isize) as usize;
+                    let sy  = (y as isize - voff).rem_euclid(HEIGHT as isize) as usize;
+                    let idx = self.pixels[sy * WIDTH + sx] as usize;
+                    out[y * WIDTH + x] = self.palette[idx];
+                }
             }
         }
     }
@@ -73,20 +86,6 @@ impl Screen {
         self.pixels.fill(color);
         self.h_offset = 0;
         self.v_offset = 0;
-    }
-
-    /// Fill the border pixels with `color` (BorderPreset for secondary).
-    pub(crate) fn fill_border(&mut self, color: u8) {
-        for y in 0..BORDER_Y {
-            for x in 0..WIDTH { self.pixels[y * WIDTH + x] = color; }
-        }
-        for y in (HEIGHT - BORDER_Y)..HEIGHT {
-            for x in 0..WIDTH { self.pixels[y * WIDTH + x] = color; }
-        }
-        for y in BORDER_Y..(HEIGHT - BORDER_Y) {
-            for x in 0..BORDER_X         { self.pixels[y * WIDTH + x] = color; }
-            for x in (WIDTH - BORDER_X)..WIDTH { self.pixels[y * WIDTH + x] = color; }
-        }
     }
 
     /// Paint a tile using raw data bytes (Item 2 SetFont / XorFont share this format).
@@ -133,7 +132,7 @@ impl Screen {
     }
 
     fn border_preset(&mut self, p: &Packet) {
-        self.fill_border(p.data[0] & 0x0F);
+        self.border_color = p.data[0] & 0x0F;
     }
 
     fn scroll(&mut self, p: &Packet, wrap: bool) {
@@ -289,7 +288,7 @@ impl CdegScreen {
                     }
                     match pkt.instruction {
                         Instruction::MemoryPreset => self.secondary.fill(0),
-                        Instruction::BorderPreset => self.secondary.fill_border(0),
+                        Instruction::BorderPreset => self.secondary.border_color = 0,
                         _ => {}
                     }
                 }
@@ -430,8 +429,17 @@ impl CdegScreen {
         let v1 = self.primary.v_offset as isize;
         let h2 = self.secondary.h_offset as isize;
         let v2 = self.secondary.v_offset as isize;
+        let border_rgb = self.clut256[
+            self.primary.border_color as usize | ((self.secondary.border_color as usize) << 4)
+        ].to_rgb32();
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
+                if y < BORDER_Y || y >= HEIGHT - BORDER_Y
+                    || x < BORDER_X || x >= WIDTH - BORDER_X
+                {
+                    out[y * WIDTH + x] = border_rgb;
+                    continue;
+                }
                 let sx1 = (x as isize - h1).rem_euclid(WIDTH  as isize) as usize;
                 let sy1 = (y as isize - v1).rem_euclid(HEIGHT as isize) as usize;
                 let sx2 = (x as isize - h2).rem_euclid(WIDTH  as isize) as usize;
@@ -449,8 +457,25 @@ impl CdegScreen {
         let h2 = self.secondary.h_offset as isize;
         let v2 = self.secondary.v_offset as isize;
 
+        // Mix: sum the 4-bit channel values and scale to 8-bit.
+        // Our palette stores `r4 * 17`; recover 4-bit then apply hcs64's formula:
+        // mixed = (p4 + s4) * 16 clamped to 255.
+        let mix = |p8: u32, s8: u32| -> u32 { ((p8 / 17 + s8 / 17) * 16).min(255) };
+
+        let bp = self.primary.palette  [self.primary.border_color   as usize];
+        let bs = self.secondary.palette[self.secondary.border_color as usize];
+        let border_rgb = (mix((bp >> 16) & 0xFF, (bs >> 16) & 0xFF) << 16)
+            | (mix((bp >> 8) & 0xFF, (bs >> 8) & 0xFF) << 8)
+            |  mix( bp       & 0xFF,  bs        & 0xFF);
+
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
+                if y < BORDER_Y || y >= HEIGHT - BORDER_Y
+                    || x < BORDER_X || x >= WIDTH - BORDER_X
+                {
+                    out[y * WIDTH + x] = border_rgb;
+                    continue;
+                }
                 let sx1 = (x as isize - h1).rem_euclid(WIDTH  as isize) as usize;
                 let sy1 = (y as isize - v1).rem_euclid(HEIGHT as isize) as usize;
                 let sx2 = (x as isize - h2).rem_euclid(WIDTH  as isize) as usize;
@@ -458,15 +483,6 @@ impl CdegScreen {
 
                 let p_rgb = self.primary.palette  [self.primary.pixels  [sy1 * WIDTH + sx1] as usize];
                 let s_rgb = self.secondary.palette[self.secondary.pixels[sy2 * WIDTH + sx2] as usize];
-
-                // Mix: sum the 4-bit channel values and scale to 8-bit.
-                // Our palette stores `r4 * 17`; recover 4-bit then apply hcs64's formula:
-                // mixed = (p4 + s4) * 16 clamped to 255.
-                let mix = |p8: u32, s8: u32| -> u32 {
-                    let p4 = p8 / 17;
-                    let s4 = s8 / 17;
-                    ((p4 + s4) * 16).min(255)
-                };
 
                 let r = mix((p_rgb >> 16) & 0xFF, (s_rgb >> 16) & 0xFF);
                 let g = mix((p_rgb >>  8) & 0xFF, (s_rgb >>  8) & 0xFF);
