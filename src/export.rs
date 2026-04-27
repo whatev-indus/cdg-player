@@ -153,8 +153,9 @@ fn run_export(
     // Output: AV1 + FLAC in MKV
     let size_str = format!("{}x{}", WIDTH, HEIGHT);
     let fps_str = EXPORT_FPS.to_string();
+    let ffmpeg = find_ffmpeg();
 
-    let mut child = Command::new("ffmpeg")
+    let mut child = Command::new(&ffmpeg)
         .args([
             "-y",
             "-f",
@@ -191,7 +192,12 @@ fn run_export(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn ffmpeg: {e}\nIs ffmpeg installed and on PATH?"))?;
+        .map_err(|e| {
+            format!(
+                "Failed to spawn ffmpeg at {}: {e}\nInstall ffmpeg and make sure it is available to the app.",
+                ffmpeg.display()
+            )
+        })?;
 
     // Take *owned* stdin handle so dropping it sends EOF to ffmpeg.
     let mut stdin = child.stdin.take().unwrap();
@@ -281,6 +287,67 @@ fn sanitize_output_stem(stem: &str) -> String {
         "Track".to_string()
     } else {
         sanitized
+    }
+}
+
+fn find_ffmpeg() -> PathBuf {
+    if let Some(path) = std::env::var_os("FFMPEG") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return path;
+        }
+    }
+
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(ffmpeg_binary_name());
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+
+    for candidate in ffmpeg_fallback_locations() {
+        let candidate = PathBuf::from(candidate);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from(ffmpeg_binary_name())
+}
+
+fn ffmpeg_binary_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "ffmpeg.exe"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "ffmpeg"
+    }
+}
+
+fn ffmpeg_fallback_locations() -> &'static [&'static str] {
+    #[cfg(target_os = "macos")]
+    {
+        &[
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/opt/local/bin/ffmpeg",
+        ]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        &[]
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        &[
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+            "/snap/bin/ffmpeg",
+        ]
     }
 }
 
