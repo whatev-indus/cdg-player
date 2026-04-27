@@ -105,10 +105,11 @@ impl Player {
     }
 
     fn elapsed(&self) -> Duration {
-        match self.paused_at {
+        let elapsed = match self.paused_at {
             Some(t) => t.duration_since(self.epoch),
             None => self.epoch.elapsed(),
-        }
+        };
+        elapsed.min(self.total_duration())
     }
 
     fn total_duration(&self) -> Duration {
@@ -172,9 +173,15 @@ impl Player {
         self.state = PlayState::Stopped;
     }
 
-    fn tick(&mut self) {
+    fn finish(&mut self) {
+        self.packet_idx = self.total_packets;
+        self.paused_at = Some(self.epoch + self.total_duration());
+        self.state = PlayState::Stopped;
+    }
+
+    fn tick(&mut self) -> bool {
         if self.state != PlayState::Playing {
-            return;
+            return false;
         }
         let due = (self.epoch.elapsed().as_secs_f64() * PACKETS_PER_SECOND as f64) as usize;
         let due = due.min(self.total_packets);
@@ -185,7 +192,10 @@ impl Player {
             self.packet_idx += 1;
         }
         if self.packet_idx >= self.total_packets {
-            self.state = PlayState::Stopped;
+            self.finish();
+            true
+        } else {
+            false
         }
     }
 }
@@ -380,6 +390,17 @@ impl App {
         }
     }
 
+    fn return_to_library(&mut self) {
+        if let Some(ref mut p) = self.player {
+            p.stop();
+        }
+        self.player = None;
+        self.tracks = vec![];
+        self.cdg_path = None;
+        self.texture = None;
+        self.cleanup_zip_temp();
+    }
+
     fn refresh_library(&mut self) {
         self.library = self
             .config
@@ -392,8 +413,22 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut advance_to_track = None;
+        let mut return_to_library = false;
         if let Some(ref mut p) = self.player {
-            p.tick();
+            if p.tick() {
+                if self.track_idx + 1 < self.tracks.len() {
+                    advance_to_track = Some(self.track_idx + 1);
+                } else {
+                    return_to_library = true;
+                }
+            }
+        }
+
+        if let Some(next_idx) = advance_to_track {
+            self.load_track(next_idx);
+        } else if return_to_library {
+            self.return_to_library();
         }
 
         // ── Bottom toolbar (two rows) ─────────────────────────────────────
@@ -408,14 +443,7 @@ impl eframe::App for App {
 
                 if self.player.is_some() {
                     if ui.button("Library").clicked() {
-                        if let Some(ref mut p) = self.player {
-                            p.stop();
-                        }
-                        self.player = None;
-                        self.tracks = vec![];
-                        self.cdg_path = None;
-                        self.texture = None;
-                        self.cleanup_zip_temp();
+                        self.return_to_library();
                     }
                 }
 
