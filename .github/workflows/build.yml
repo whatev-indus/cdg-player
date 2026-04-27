@@ -122,6 +122,19 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Install ffmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          New-Item -ItemType Directory -Force -Path bundle | Out-Null
+          $ffmpegExe = Get-ChildItem "C:\ProgramData\chocolatey\lib" -Recurse -Filter ffmpeg.exe |
+            Where-Object { $_.FullName -notmatch '\\bin\\' } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $ffmpegExe) {
+            throw "Could not locate installed ffmpeg.exe"
+          }
+          Copy-Item $ffmpegExe "bundle\ffmpeg.exe"
+
       - name: Install WiX Toolset
         run: |
           choco install wixtoolset --yes --no-progress
@@ -153,6 +166,9 @@ jobs:
                     <Component Id="MainExecutable" Guid="7580931F-26BF-4A3E-8F28-E57FEA5A4C54" Win64="yes">
                       <File Id="CdgPlayerExe" Source="target\release\cdg-player.exe" KeyPath="yes" />
                     </Component>
+                    <Component Id="BundledFfmpeg" Guid="5F4F4B7B-C031-4A12-8E11-E29E332271D0" Win64="yes">
+                      <File Id="BundledFfmpegExe" Source="bundle\ffmpeg.exe" KeyPath="yes" />
+                    </Component>
                   </Directory>
                 </Directory>
                 <Directory Id="ProgramMenuFolder">
@@ -173,6 +189,7 @@ jobs:
 
               <Feature Id="Complete" Level="1">
                 <ComponentRef Id="MainExecutable" />
+                <ComponentRef Id="BundledFfmpeg" />
                 <ComponentRef Id="ApplicationShortcut" />
               </Feature>
             </Product>
