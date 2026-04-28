@@ -7,7 +7,7 @@ Supports exporting by track to av1 (video) + flac (audio) in an mkv container.
 CD+EG support based on hcs64's decoder (used with permission):
 https://github.com/hcs64/cdg-decode
 
-<img width="779" height="704" alt="CD+G Player_screenshot" src="https://github.com/user-attachments/assets/7ae66d2f-d3ad-4a90-87a4-6f18e3f24629" />
+<img width="712" height="667" alt="Screenshot 2026-04-27 at 10 08 06 PM" src="https://github.com/user-attachments/assets/9288ee10-6755-4cc6-aafd-5b8da4ae8f5a" />
 
 ## FFmpeg Notice
 
