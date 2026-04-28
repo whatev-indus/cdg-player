@@ -251,6 +251,9 @@ impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_fonts(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        let mut visuals = egui::Visuals::dark();
+        visuals.override_text_color = Some(egui::Color32::from_gray(220));
+        cc.egui_ctx.set_visuals(visuals);
         let config = Config::load();
         let library = config
             .library_path
@@ -473,105 +476,107 @@ impl eframe::App for App {
             self.return_to_library();
         }
 
-        // ── Bottom toolbar (two rows) ─────────────────────────────────────
+        // ── Bottom toolbar ────────────────────────────────────────────────
         let toolbar = egui::TopBottomPanel::bottom("controls").show(ctx, |ui| {
             ui.add_space(3.0);
+            let in_library = self.player.is_none();
 
-            // ── Row 1: disc controls ──────────────────────────────────────
+            // ── Row 1: open | library | transport | track/export ─────────
             ui.horizontal(|ui| {
-                if ui.button("Open").clicked() {
-                    self.open_disc_dialog();
-                }
+                let body_font = egui::TextStyle::Body.resolve(ui.style());
+                let bp = ui.spacing().button_padding;
+                let sp = ui.spacing().item_spacing.x;
+                let avail = ui.available_width();
 
-                if self.player.is_some() {
-                    if ui.button("Library").clicked() {
-                        self.return_to_library();
-                    }
-                }
-
-                if !self.tracks.is_empty() {
-                    ui.separator();
-                    let label = format!("Track {:02}", self.tracks[self.track_idx].number);
-                    egui::ComboBox::from_id_salt("track_select")
-                        .selected_text(label)
-                        .show_ui(ui, |ui| {
-                            for i in 0..self.tracks.len() {
-                                let l = format!("Track {:02}", self.tracks[i].number);
-                                if ui.selectable_label(self.track_idx == i, l).clicked() {
-                                    self.load_track(i);
-                                }
-                            }
-                        });
-                }
-
-                // CD+EG in-context toggle (only visible when disc has CD+EG data)
-                if let Some(ref mut player) = self.player {
-                    if player.is_cdeg {
-                        ui.separator();
-                        let enabled = player.screen.cdeg_enabled;
-                        let (label, fg, bg) = if enabled {
-                            (
-                                "CD+EG",
-                                egui::Color32::BLACK,
-                                egui::Color32::from_rgb(80, 180, 80),
-                            )
-                        } else {
-                            (
-                                "CD+G",
-                                egui::Color32::from_gray(180),
-                                egui::Color32::from_gray(50),
-                            )
-                        };
-                        let btn = egui::Button::new(
-                            egui::RichText::new(label).size(11.0).color(fg).strong(),
+                let measure_btn = |text: &str| -> f32 {
+                    ui.fonts(|f| {
+                        f.layout_no_wrap(
+                            text.to_string(),
+                            body_font.clone(),
+                            egui::Color32::WHITE,
                         )
-                        .fill(bg)
-                        .corner_radius(4.0);
-                        let resp = ui.add(btn).on_hover_text(if enabled {
-                            "Showing CD+EG graphics — click to switch to CD+G"
-                        } else {
-                            "Showing CD+G graphics — click to switch to CD+EG"
-                        });
-                        if resp.clicked() {
-                            let new_enabled = !enabled;
-                            self.cdeg_enabled = new_enabled;
-                            let channels = player.screen.active_channels;
-                            let pos = player.packet_idx;
-                            player.screen = CdegScreen::new(new_enabled);
-                            player.screen.active_channels = channels;
-                            for i in 0..pos {
-                                if let (_, Some(ref pkt)) = player.packets[i] {
-                                    player.screen.apply(pkt);
-                                }
-                            }
-                        }
-                    }
-                }
+                        .size()
+                        .x
+                    }) + bp.x * 2.0
+                };
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let exporting = matches!(
+                    self.export_progress
+                        .as_ref()
+                        .and_then(|p| p.lock().ok())
+                        .as_deref(),
+                    Some(ExportState::Running { .. })
+                );
+                let can_export = !self.tracks.is_empty() && self.cdg_path.is_some();
+
+                if in_library {
+                    let total_w = measure_btn("Open") + sp + measure_btn("Set Library");
+                    ui.add_space(((avail - total_w) / 2.0).max(0.0));
+
+                    if ui.button("Open").clicked() {
+                        self.open_disc_dialog();
+                    }
+
                     if ui.button("Set Library").clicked() {
                         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                             self.config.set_library(dir);
                             self.refresh_library();
                         }
                     }
-                    ui.separator();
-
-                    let exporting = matches!(
-                        self.export_progress
-                            .as_ref()
-                            .and_then(|p| p.lock().ok())
-                            .as_deref(),
-                        Some(ExportState::Running { .. })
-                    );
-                    if exporting {
-                        if ui.button("Cancel").clicked() {
-                            if let Some(ref tok) = self.export_cancel {
-                                tok.store(true, std::sync::atomic::Ordering::Relaxed);
-                            }
+                } else {
+                    let status_text = self.export_progress.as_ref().and_then(|prog| {
+                        match &*prog.lock().ok()? {
+                            ExportState::Running { track_idx, total, frame_frac } => Some(format!(
+                                "Track {}/{} - {:.0}%",
+                                track_idx + 1,
+                                total,
+                                frame_frac * 100.0
+                            )),
+                            ExportState::Done => Some("Export done.".to_string()),
+                            ExportState::Error(e) => Some(e.clone()),
+                            ExportState::Idle => None,
                         }
-                    } else {
-                        let can_export = !self.tracks.is_empty() && self.cdg_path.is_some();
+                    });
+                    let mut total_w = measure_btn("Open")
+                        + sp
+                        + measure_btn("Library")
+                        + sp
+                        + 8.0
+                        + sp
+                        + measure_btn("⏮")
+                        + sp
+                        + measure_btn("⏸")
+                        + sp
+                        + measure_btn("⏭");
+                    if !self.tracks.is_empty() {
+                        total_w += sp + 8.0 + sp + 70.0 + sp + 8.0;
+                    }
+                    total_w += sp
+                        + if exporting {
+                            measure_btn("Cancel")
+                        } else {
+                            measure_btn("Export Track") + sp + measure_btn("Export Album")
+                        };
+                    if status_text.is_some() {
+                        total_w += sp + 8.0;
+                    }
+                    ui.add_space(((avail - total_w) / 2.0).max(0.0));
+
+                    if ui.button("Open").clicked() {
+                        self.open_disc_dialog();
+                    }
+
+                    if ui.button("Library").clicked() {
+                        return_to_library = true;
+                    }
+
+                    if !return_to_library {
+                        ui.label("|");
+
+                        let is_playing = {
+                            let p = self.player.as_ref().unwrap();
+                            p.state == PlayState::Playing
+                        };
                         let cdeg_on = self
                             .player
                             .as_ref()
@@ -584,132 +589,94 @@ impl eframe::App for App {
                             .map(|s| s.to_string_lossy().into_owned())
                             .unwrap_or_else(|| "Disc".to_string());
 
-                        // Export Album — all tracks, channels 0 & 1 if both present, else 0 only
-                        if ui.add_enabled(can_export, egui::Button::new("Export Album")).clicked() {
-                            if let Some(dir) = rfd::FileDialog::new()
-                                .set_title("Choose output folder for MKV files")
-                                .pick_folder()
-                            {
-                                let cp = self.player.as_ref()
-                                    .map(|p| p.channels_present)
-                                    .unwrap_or([false; 16]);
-                                let mut album_channels = [false; 16];
-                                album_channels[0] = true;
-                                if cp[0] && cp[1] {
-                                    album_channels[1] = true;
+                        if !self.tracks.is_empty() {
+                            let track_label =
+                                format!("Track {:02}", self.tracks[self.track_idx].number);
+                            egui::ComboBox::from_id_salt("track_select")
+                                .selected_text(track_label)
+                                .width(70.0)
+                                .show_ui(ui, |ui| {
+                                    for i in 0..self.tracks.len() {
+                                        let l = format!("Track {:02}", self.tracks[i].number);
+                                        if ui.selectable_label(self.track_idx == i, l).clicked() {
+                                            self.load_track(i);
+                                        }
+                                    }
+                                });
+
+                            ui.label("|");
+                        }
+
+                        let can_prev = self.track_idx > 0;
+                        if ui.add_enabled(can_prev, egui::Button::new("⏮")).clicked() {
+                            self.load_track(self.track_idx - 1);
+                        }
+
+                        let play_label = if is_playing { "⏸" } else { "▶" };
+                        if ui.button(play_label).clicked() {
+                            if is_playing {
+                                self.player.as_mut().unwrap().pause();
+                            } else {
+                                self.player.as_mut().unwrap().play();
+                            }
+                        }
+
+                        let can_next = self.track_idx + 1 < self.tracks.len();
+                        if ui.add_enabled(can_next, egui::Button::new("⏭")).clicked() {
+                            self.load_track(self.track_idx + 1);
+                        }
+
+                        ui.label("|");
+                        if exporting {
+                            if ui.button("Cancel").clicked() {
+                                if let Some(ref tok) = self.export_cancel {
+                                    tok.store(true, std::sync::atomic::Ordering::Relaxed);
                                 }
-                                let (prog, cancel) = export::export_all_async(
-                                    self.tracks.clone(),
-                                    self.cdg_path.clone().unwrap(),
-                                    cdeg_on,
-                                    album_channels,
-                                    dir,
-                                    disc_title.clone(),
-                                );
-                                self.export_progress = Some(prog);
-                                self.export_cancel = Some(cancel);
                             }
-                        }
-
-                        // Export Track — current track only, with selected channels
-                        if ui.add_enabled(can_export, egui::Button::new("Export Track")).clicked() {
-                            if let Some(dir) = rfd::FileDialog::new()
-                                .set_title("Choose output folder for MKV files")
-                                .pick_folder()
-                            {
-                                let track = self.tracks[self.track_idx].clone();
-                                let (prog, cancel) = export::export_all_async(
-                                    vec![track],
-                                    self.cdg_path.clone().unwrap(),
-                                    cdeg_on,
-                                    self.active_channels,
-                                    dir,
-                                    disc_title,
-                                );
-                                self.export_progress = Some(prog);
-                                self.export_cancel = Some(cancel);
+                        } else {
+                            if ui.add_enabled(can_export, egui::Button::new("Export Track")).clicked() {
+                                if let Some(dir) = rfd::FileDialog::new()
+                                    .set_title("Choose output folder for MKV files")
+                                    .pick_folder()
+                                {
+                                    let track = self.tracks[self.track_idx].clone();
+                                    let (prog, cancel) = export::export_all_async(
+                                        vec![track],
+                                        self.cdg_path.clone().unwrap(),
+                                        cdeg_on,
+                                        self.active_channels,
+                                        dir,
+                                        disc_title.clone(),
+                                    );
+                                    self.export_progress = Some(prog);
+                                    self.export_cancel = Some(cancel);
+                                }
                             }
-                        }
-                    }
-
-                    if let Some(ref prog) = self.export_progress {
-                        match &*prog.lock().unwrap() {
-                            ExportState::Running {
-                                track_idx,
-                                total,
-                                frame_frac,
-                            } => {
-                                ui.label(format!(
-                                    "Track {}/{} — {:.0}%",
-                                    track_idx + 1,
-                                    total,
-                                    frame_frac * 100.0
-                                ));
-                            }
-                            ExportState::Done => {
-                                ui.label("Export done.");
-                            }
-                            ExportState::Error(e) => {
-                                ui.colored_label(egui::Color32::RED, e);
-                            }
-                            ExportState::Idle => {}
-                        }
-                    }
-                });
-            });
-
-            ui.separator();
-
-            // ── Row 2: channel selector ───────────────────────────────────
-            ui.horizontal(|ui| {
-                let label_text = "Channels:";
-                let label_width = ui.fonts(|f| {
-                    f.layout_no_wrap(
-                        label_text.to_string(),
-                        egui::TextStyle::Body.resolve(ui.style()),
-                        egui::Color32::WHITE,
-                    )
-                    .size()
-                    .x
-                });
-                let btn_w = 26.0;
-                let btn_gap = 2.0;
-                let buttons_total = 16.0 * btn_w + 15.0 * btn_gap;
-                let content_w = label_width + ui.spacing().item_spacing.x + buttons_total;
-                ui.add_space(((ui.available_width() - content_w) / 2.0).max(0.0));
-                ui.label(label_text);
-                ui.spacing_mut().item_spacing.x = btn_gap;
-                for ch in 0..16usize {
-                    let (present, active) = self.player
-                        .as_ref()
-                        .map(|p| (p.channels_present[ch], p.screen.active_channels[ch]))
-                        .unwrap_or((false, false));
-
-                    let (text_color, fill) = if present && active {
-                        (egui::Color32::BLACK, egui::Color32::from_rgb(80, 180, 80))
-                    } else {
-                        (egui::Color32::WHITE, egui::Color32::from_gray(80))
-                    };
-                    let btn = egui::Button::new(
-                        egui::RichText::new(format!("{ch}")).size(11.0).color(text_color).strong(),
-                    )
-                    .fill(fill)
-                    .corner_radius(4.0)
-                    .min_size(egui::vec2(26.0, 0.0));
-
-                    if ui.add_enabled(present, btn).clicked() {
-                        let new_active = !active;
-                        self.active_channels[ch] = new_active;
-                        if let Some(ref mut player) = self.player {
-                            player.screen.active_channels[ch] = new_active;
-                            let channels = player.screen.active_channels;
-                            let cdeg = player.screen.cdeg_enabled;
-                            let pos = player.packet_idx;
-                            player.screen = CdegScreen::new(cdeg);
-                            player.screen.active_channels = channels;
-                            for i in 0..pos {
-                                if let (_, Some(ref pkt)) = player.packets[i] {
-                                    player.screen.apply(pkt);
+                            if ui.add_enabled(can_export, egui::Button::new("Export Album")).clicked() {
+                                if let Some(dir) = rfd::FileDialog::new()
+                                    .set_title("Choose output folder for MKV files")
+                                    .pick_folder()
+                                {
+                                    let cp = self
+                                        .player
+                                        .as_ref()
+                                        .map(|p| p.channels_present)
+                                        .unwrap_or([false; 16]);
+                                    let mut album_channels = [false; 16];
+                                    album_channels[0] = true;
+                                    if cp[0] && cp[1] {
+                                        album_channels[1] = true;
+                                    }
+                                    let (prog, cancel) = export::export_all_async(
+                                        self.tracks.clone(),
+                                        self.cdg_path.clone().unwrap(),
+                                        cdeg_on,
+                                        album_channels,
+                                        dir,
+                                        disc_title.clone(),
+                                    );
+                                    self.export_progress = Some(prog);
+                                    self.export_cancel = Some(cancel);
                                 }
                             }
                         }
@@ -719,80 +686,332 @@ impl eframe::App for App {
 
             ui.separator();
 
-            // ── Row 3: transport + seek + time | volume ───────────────────
+            // ── Row 2: seek | time | volume ──────────────────────────────
             ui.horizontal(|ui| {
-                if let Some(ref mut player) = self.player {
-                    let play_label = if player.state == PlayState::Playing {
-                        "⏸"
-                    } else {
-                        "▶"
-                    };
-                    if ui.button(play_label).clicked() {
-                        match player.state {
-                            PlayState::Playing => player.pause(),
-                            _ => player.play(),
-                        }
-                    }
-                }
+                let icon_sz = icons::icon_size(22.0);
+                let sp = ui.spacing().item_spacing.x;
+                let body_font = egui::TextStyle::Body.resolve(ui.style());
+                let avail = ui.available_width();
+                let volume_slider_w = 72.0;
 
-                // Time label — left of the seek slider.
-                if let Some(ref player) = self.player {
-                    let elapsed = player.elapsed();
-                    let total = player.total_duration();
+                if !in_library && !self.tracks.is_empty() {
+                    let p = self.player.as_ref().unwrap();
+                    let elapsed = p.elapsed();
+                    let total = p.total_duration();
                     let fmt = |d: Duration| {
                         let s = d.as_secs();
                         format!("{:02}:{:02}", s / 60, s % 60)
                     };
-                    ui.label(format!("{} / {}", fmt(elapsed), fmt(total)));
-                }
-
-                // Seek slider — fills space between time label and volume section.
-                if let Some(ref mut player) = self.player {
-                    ui.spacing_mut().item_spacing.x = 3.0;
-                    let mut pos = player.elapsed().as_secs_f64();
-                    let total_secs = player.total_duration().as_secs_f64().max(1.0);
-                    let reserved = 80.0 + 8.0 + 22.0;
-                    let seek_w = (ui.available_width() - reserved).max(40.0);
-                    let resp = ui.add_sized(
-                        [seek_w, ui.available_height()],
-                        egui::Slider::new(&mut pos, 0.0..=total_secs).show_value(false),
-                    );
-                    if resp.drag_stopped() || resp.lost_focus() {
-                        let target = (pos * PACKETS_PER_SECOND as f64) as usize;
-                        player.seek_to(target);
-                    }
-                }
-
-                // Volume section — pushed to the far right.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let icon_h = ui.available_height();
-                    let icon_sz = icons::icon_size(icon_h);
-
-                    // Rightmost: reactive sound icon.
-                    let (icon_rect, _) = ui.allocate_exact_size(icon_sz, egui::Sense::hover());
-                    if self.volume < 0.5 {
-                        icons::sound_lo(ui.painter(), icon_rect);
-                    } else {
-                        icons::sound_hi(ui.painter(), icon_rect);
-                    }
-
-                    // Volume slider.
-                    if ui
-                        .add_sized(
-                            [80.0, ui.available_height()],
-                            egui::Slider::new(&mut self.volume, 0.0f32..=1.0).show_value(false),
+                    let time_str = format!("{} / {}", fmt(elapsed), fmt(total));
+                    let time_w = ui.fonts(|f| {
+                        f.layout_no_wrap(
+                            time_str.clone(),
+                            body_font.clone(),
+                            egui::Color32::WHITE,
                         )
-                        .changed()
+                        .size()
+                        .x
+                    });
+                    let sep_w = ui.fonts(|f| {
+                        f.layout_no_wrap(
+                            "|".to_string(),
+                            body_font.clone(),
+                            egui::Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                    });
+                    let volume_cluster_pad = 32.0;
+                    let controls_w = time_w
+                        + sp
+                        + sep_w
+                        + sp
+                        + icon_sz.x
+                        + sp
+                        + volume_slider_w
+                        + sp
+                        + icon_sz.x
+                        + volume_cluster_pad;
+                    let edge_gutter = 12.0;
+                    let seek_w = (avail - sp - controls_w - edge_gutter).max(160.0);
+                    let total_w = seek_w + sp + controls_w;
+                    ui.add_space(((avail - total_w) / 2.0).max(0.0));
+                    let total_secs = total.as_secs_f64().max(1.0);
+                    let progress = (elapsed.as_secs_f64() / total_secs).clamp(0.0, 1.0) as f32;
+                    let bar_height = 18.0;
+                    let (seek_rect, seek_resp) = ui.allocate_exact_size(
+                        egui::vec2(seek_w, bar_height),
+                        egui::Sense::click_and_drag(),
+                    );
+                    let track_rect = egui::Rect::from_center_size(
+                        seek_rect.center(),
+                        egui::vec2(seek_rect.width(), 6.0),
+                    );
+                    let visuals = ui.visuals();
+                    let bg_fill = visuals.widgets.inactive.bg_fill;
+                    let fg_fill = visuals.selection.bg_fill;
+                    let thumb_x = track_rect.left() + track_rect.width() * progress;
+                    let played_rect = egui::Rect::from_min_max(
+                        track_rect.min,
+                        egui::pos2(thumb_x, track_rect.bottom()),
+                    );
+
+                    ui.painter().rect_filled(track_rect, 3.0, bg_fill);
+                    ui.painter().rect_filled(played_rect, 3.0, fg_fill);
+                    ui.painter()
+                        .circle_filled(egui::pos2(thumb_x, track_rect.center().y), 6.0, fg_fill);
+
+                    if (seek_resp.clicked() || seek_resp.dragged())
+                        && seek_resp.interact_pointer_pos().is_some()
                     {
-                        if let Some(ref p) = self.player {
-                            p.sink.set_volume(self.volume);
+                        let pointer = seek_resp.interact_pointer_pos().unwrap();
+                        let frac =
+                            ((pointer.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0);
+                        let target = (frac as f64 * total_secs * PACKETS_PER_SECOND as f64) as usize;
+                        self.player.as_mut().unwrap().seek_to(target);
+                    }
+
+                    ui.label(time_str);
+                    ui.label("|");
+                } else {
+                    let vol_w = icon_sz.x + sp + volume_slider_w + sp + icon_sz.x;
+                    let low_icon_shift =
+                        icon_sz.x * (1.0 - 39.389 / 75.0) * 0.72;
+                    ui.add_space((((avail - vol_w) / 2.0) - (low_icon_shift * 0.5)).max(0.0));
+                }
+
+                let (icon_rect, _) = ui.allocate_exact_size(icon_sz, egui::Sense::hover());
+                icons::sound_lo(ui.painter(), icon_rect);
+                if ui
+                    .add_sized(
+                        [volume_slider_w, 18.0],
+                        egui::Slider::new(&mut self.volume, 0.0f32..=1.0).show_value(false),
+                    )
+                    .changed()
+                {
+                    if let Some(ref p) = self.player {
+                        p.sink.set_volume(self.volume);
+                    }
+                }
+                let (icon_rect, _) = ui.allocate_exact_size(icon_sz, egui::Sense::hover());
+                icons::sound_hi(ui.painter(), icon_rect);
+            });
+
+            ui.separator();
+
+            let status_text = if in_library {
+                None
+            } else {
+                self.export_progress.as_ref().and_then(|prog| {
+                    match &*prog.lock().ok()? {
+                        ExportState::Running { track_idx, total, frame_frac } => Some(format!(
+                            "Track {}/{} - {:.0}%",
+                            track_idx + 1,
+                            total,
+                            frame_frac * 100.0
+                        )),
+                        ExportState::Done => Some("Export done.".to_string()),
+                        ExportState::Error(e) => Some(e.clone()),
+                        ExportState::Idle => None,
+                    }
+                })
+            };
+            if let Some(status_text) = status_text {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let avail = ui.available_width();
+                    let body_font = egui::TextStyle::Body.resolve(ui.style());
+                    let text_w = ui.fonts(|f| {
+                        f.layout_no_wrap(
+                            status_text.clone(),
+                            body_font.clone(),
+                            egui::Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                    });
+                    ui.add_space(((avail - text_w) / 2.0).max(0.0));
+                    match self
+                        .export_progress
+                        .as_ref()
+                        .and_then(|prog| prog.lock().ok())
+                        .as_deref()
+                    {
+                        Some(ExportState::Error(_)) => {
+                            ui.colored_label(egui::Color32::RED, status_text);
+                        }
+                        _ => {
+                            ui.label(status_text);
                         }
                     }
                 });
+            }
+
+            // ── Row 4: channel selector (player) or library context hint ──
+            ui.horizontal(|ui| {
+                if in_library {
+                    let msg = if self.library.is_empty() {
+                        "Click \"Set Library\" to navigate to your CD+G disc images, or click \"Open\" to load a file."
+                    } else {
+                        "Select a CD+G title or click \"Open\" to load a file."
+                    };
+                    let avail = ui.available_width();
+                    let body_font = egui::TextStyle::Body.resolve(ui.style());
+                    let text_w = ui
+                        .fonts(|f| {
+                            f.layout_no_wrap(
+                                msg.to_string(),
+                                body_font,
+                                egui::Color32::TRANSPARENT,
+                            )
+                            .size()
+                            .x
+                        })
+                        .min(avail);
+                    ui.add_space(((avail - text_w) / 2.0).max(0.0));
+                    ui.label(egui::RichText::new(msg).color(egui::Color32::GRAY));
+                } else {
+                    // CD+EG toggle | Channels (centered)
+                    let is_cdeg_disc =
+                        self.player.as_ref().map(|p| p.is_cdeg).unwrap_or(false);
+                    let label_text = "Channels:";
+                    let spacing = ui.spacing().item_spacing.x;
+                    let btn_padding = ui.spacing().button_padding;
+                    let body_font = egui::TextStyle::Body.resolve(ui.style());
+
+                    let label_width = ui.fonts(|f| {
+                        f.layout_no_wrap(
+                            label_text.to_string(),
+                            body_font.clone(),
+                            egui::Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                    });
+                    let btn_w = 26.0;
+                    let btn_gap = 2.0;
+                    let buttons_total = 16.0 * btn_w + 15.0 * btn_gap;
+
+                    let cdeg_btn_min_w = ui.fonts(|f| {
+                        f.layout_no_wrap(
+                            "CD+EG".to_string(),
+                            body_font.clone(),
+                            egui::Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                    }) + btn_padding.x * 2.0;
+                    let cdeg_extra = if is_cdeg_disc {
+                        let sep_w = ui.fonts(|f| {
+                            f.layout_no_wrap(
+                                "|".to_string(),
+                                body_font.clone(),
+                                egui::Color32::WHITE,
+                            )
+                            .size()
+                            .x
+                        });
+                        cdeg_btn_min_w + spacing + sep_w + spacing
+                    } else {
+                        0.0
+                    };
+
+                    let content_w = cdeg_extra + label_width + spacing + buttons_total;
+                    ui.add_space(((ui.available_width() - content_w) / 2.0).max(0.0));
+
+                    if is_cdeg_disc {
+                        if let Some(ref mut player) = self.player {
+                            let enabled = player.screen.cdeg_enabled;
+                            let (lbl, fg, bg) = if enabled {
+                                (
+                                    "CD+EG",
+                                    egui::Color32::BLACK,
+                                    egui::Color32::from_rgb(80, 180, 80),
+                                )
+                            } else {
+                                (
+                                    "CD+G",
+                                    egui::Color32::from_gray(180),
+                                    egui::Color32::from_gray(50),
+                                )
+                            };
+                            let btn = egui::Button::new(
+                                egui::RichText::new(lbl).size(11.0).color(fg).strong(),
+                            )
+                            .fill(bg)
+                            .corner_radius(4.0)
+                            .min_size(egui::vec2(cdeg_btn_min_w, 0.0));
+                            let resp = ui.add(btn).on_hover_text(if enabled {
+                                "Showing CD+EG graphics — click to switch to CD+G"
+                            } else {
+                                "Showing CD+G graphics — click to switch to CD+EG"
+                            });
+                            if resp.clicked() {
+                                let new_enabled = !enabled;
+                                self.cdeg_enabled = new_enabled;
+                                let channels = player.screen.active_channels;
+                                let pos = player.packet_idx;
+                                player.screen = CdegScreen::new(new_enabled);
+                                player.screen.active_channels = channels;
+                                for i in 0..pos {
+                                    if let (_, Some(ref pkt)) = player.packets[i] {
+                                        player.screen.apply(pkt);
+                                    }
+                                }
+                            }
+                        }
+                        ui.label("|");
+                    }
+
+                    ui.label(label_text);
+                    ui.spacing_mut().item_spacing.x = btn_gap;
+                    for ch in 0..16usize {
+                        let (present, active) = self
+                            .player
+                            .as_ref()
+                            .map(|p| (p.channels_present[ch], p.screen.active_channels[ch]))
+                            .unwrap_or((false, false));
+                        let (text_color, fill) = if present && active {
+                            (egui::Color32::BLACK, egui::Color32::from_rgb(80, 180, 80))
+                        } else {
+                            (egui::Color32::WHITE, egui::Color32::from_gray(80))
+                        };
+                        let btn = egui::Button::new(
+                            egui::RichText::new(format!("{ch}"))
+                                .size(11.0)
+                                .color(text_color)
+                                .strong(),
+                        )
+                        .fill(fill)
+                        .corner_radius(4.0)
+                        .min_size(egui::vec2(26.0, 0.0));
+                        if ui.add_enabled(present, btn).clicked() {
+                            let new_active = !active;
+                            self.active_channels[ch] = new_active;
+                            if let Some(ref mut player) = self.player {
+                                player.screen.active_channels[ch] = new_active;
+                                let channels = player.screen.active_channels;
+                                let cdeg = player.screen.cdeg_enabled;
+                                let pos = player.packet_idx;
+                                player.screen = CdegScreen::new(cdeg);
+                                player.screen.active_channels = channels;
+                                for i in 0..pos {
+                                    if let (_, Some(ref pkt)) = player.packets[i] {
+                                        player.screen.apply(pkt);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             });
 
             ui.add_space(3.0);
         });
+
+        if return_to_library {
+            self.return_to_library();
+        }
 
         // ── Central panel ─────────────────────────────────────────────────
         egui::CentralPanel::default()

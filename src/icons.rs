@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2, vec2};
 
-const ICON_COLOR: Color32 = Color32::from_rgb(183, 183, 183);
+const ICON_COLOR: Color32 = Color32::from_gray(220);
 
 /// Draw the speaker + sound waves icon (high volume) into `rect`.
 pub fn sound_hi(painter: &Painter, rect: Rect) {
@@ -11,7 +11,20 @@ pub fn sound_hi(painter: &Painter, rect: Rect) {
 
 /// Draw the speaker only (low / mute) into `rect`.
 pub fn sound_lo(painter: &Painter, rect: Rect) {
+    // Speaker cone ends at x≈39.389 in the 75-unit SVG space; the remaining 47.5%
+    // would be empty. Shift most, but not all, of that dead space rightward so the
+    // icon sits closer to the slider without looking visually detached.
+    let shift = rect.width() * (1.0 - 39.389 / 75.0) * 0.72;
+    let shifted = Rect::from_min_size(egui::pos2(rect.min.x + shift, rect.min.y), rect.size());
+    draw_speaker(painter, shifted);
+}
+
+/// Draw the speaker with an X (muted) into `rect`.
+pub fn sound_muted(painter: &Painter, rect: Rect) {
     draw_speaker(painter, rect);
+    let sw = stroke(rect);
+    painter.line_segment([map(Pos2::new(47.0, 22.0), rect), map(Pos2::new(67.0, 58.0), rect)], sw);
+    painter.line_segment([map(Pos2::new(67.0, 22.0), rect), map(Pos2::new(47.0, 58.0), rect)], sw);
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -95,5 +108,5 @@ fn draw_waves(painter: &Painter, rect: Rect, count: usize) {
 
 /// Returns the size to allocate for a speaker icon in a toolbar of the given height.
 pub fn icon_size(height: f32) -> Vec2 {
-    vec2(height * 0.9, height)
+    vec2(height * 0.78, height * 0.86)
 }
