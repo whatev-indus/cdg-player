@@ -10,7 +10,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  APP_VERSION: 1.0.4
+  APP_VERSION: 1.0.5
 
 jobs:
 
@@ -80,16 +80,16 @@ jobs:
 
           # Convert CDG Logo.png to AppIcon.icns
           mkdir -p AppIcon.iconset
-          sips -z 16   16   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_16x16.png
-          sips -z 32   32   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_16x16@2x.png
-          sips -z 32   32   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_32x32.png
-          sips -z 64   64   "Logo/CDG Logo.png" --out AppIcon.iconset/icon_32x32@2x.png
-          sips -z 128  128  "Logo/CDG Logo.png" --out AppIcon.iconset/icon_128x128.png
-          sips -z 256  256  "Logo/CDG Logo.png" --out AppIcon.iconset/icon_128x128@2x.png
-          sips -z 256  256  "Logo/CDG Logo.png" --out AppIcon.iconset/icon_256x256.png
-          sips -z 512  512  "Logo/CDG Logo.png" --out AppIcon.iconset/icon_256x256@2x.png
-          sips -z 512  512  "Logo/CDG Logo.png" --out AppIcon.iconset/icon_512x512.png
-          sips -z 1024 1024 "Logo/CDG Logo.png" --out AppIcon.iconset/icon_512x512@2x.png
+          sips -z 16   16   "logos/CDG Logo.png" --out AppIcon.iconset/icon_16x16.png
+          sips -z 32   32   "logos/CDG Logo.png" --out AppIcon.iconset/icon_16x16@2x.png
+          sips -z 32   32   "logos/CDG Logo.png" --out AppIcon.iconset/icon_32x32.png
+          sips -z 64   64   "logos/CDG Logo.png" --out AppIcon.iconset/icon_32x32@2x.png
+          sips -z 128  128  "logos/CDG Logo.png" --out AppIcon.iconset/icon_128x128.png
+          sips -z 256  256  "logos/CDG Logo.png" --out AppIcon.iconset/icon_128x128@2x.png
+          sips -z 256  256  "logos/CDG Logo.png" --out AppIcon.iconset/icon_256x256.png
+          sips -z 512  512  "logos/CDG Logo.png" --out AppIcon.iconset/icon_256x256@2x.png
+          sips -z 512  512  "logos/CDG Logo.png" --out AppIcon.iconset/icon_512x512.png
+          sips -z 1024 1024 "logos/CDG Logo.png" --out AppIcon.iconset/icon_512x512@2x.png
           iconutil -c icns AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 
       - name: Ad-hoc code sign
@@ -115,7 +115,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Convert PNG to ICO
-        run: magick "Logo/CDG Logo.png" -define icon:auto-resize=256,128,64,48,32,16 "Logo/CDG Logo.ico"
+        run: magick "logos/CDG Logo.png" -define icon:auto-resize=256,128,64,48,32,16 "logos/CDG Logo.ico"
 
       - name: Build
         run: cargo build --release
@@ -178,7 +178,7 @@ jobs:
               <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64" />
               <MajorUpgrade DowngradeErrorMessage="A newer version of CD+G Player is already installed." />
               <MediaTemplate EmbedCab="yes" />
-              <Icon Id="AppIcon" SourceFile="Logo\CDG Logo.ico" />
+              <Icon Id="AppIcon" SourceFile="logos\CDG Logo.ico" />
               <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
               <Directory Id="TARGETDIR" Name="SourceDir">
@@ -263,7 +263,7 @@ jobs:
           chmod +x linuxdeploy
 
           # Resize icon to 512x512 (linuxdeploy requires a standard resolution)
-          convert "Logo/CDG Logo.png" -resize 512x512 icon-512.png
+          convert "logos/CDG Logo.png" -resize 512x512 icon-512.png
 
           # Set up AppDir structure
           mkdir -p AppDir/usr/bin

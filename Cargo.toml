@@ -1,6 +1,6 @@
 [package]
 name = "cdg-player"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2024"
 
 [dependencies]
@@ -8,6 +8,7 @@ byteorder = "1"
 dirs = "5"
 eframe = "0.31"
 egui = "0.31"
+egui_extras = { version = "0.31", features = ["svg"] }
 hound = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.15"

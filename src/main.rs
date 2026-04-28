@@ -7,7 +7,7 @@ mod export;
 mod icons;
 mod renderer;
 
-use cdg::{AnyPacket, PACKETS_PER_SECOND, PacketIter};
+use cdg::{AnyPacket, PACKETS_PER_SECOND, PacketIter, channels_present};
 use config::{Config, DiscEntry, DiscSource, scan_library};
 use cue::{CHANNELS, SAMPLE_RATE};
 use export::{CancelToken, ExportState, Progress};
@@ -43,6 +43,8 @@ struct Player {
     audio_samples: Vec<i16>,
     /// True if this disc contains Item 2 (CD+EG) packets.
     pub is_cdeg: bool,
+    /// Which of the 16 tile channels are present on this disc.
+    pub channels_present: [bool; 16],
 }
 
 impl Player {
@@ -55,6 +57,7 @@ impl Player {
         let cdg_data = &cdg_raw[cdg_offset.min(cdg_raw.len())..cdg_end];
         let packets: Vec<_> = PacketIter::new(cdg_data).collect();
         let total = packets.len();
+        let disc_channels = channels_present(cdg_data);
 
         // Auto-detect whether this disc has any CD+EG (Item 2) data.
         let has_cdeg = packets
@@ -77,6 +80,7 @@ impl Player {
             sink,
             audio_samples,
             is_cdeg: has_cdeg,
+            channels_present: disc_channels,
         }
     }
 
@@ -101,6 +105,7 @@ impl Player {
             sink,
             audio_samples,
             is_cdeg: false,
+            channels_present: [false; 16],
         }
     }
 
@@ -118,7 +123,9 @@ impl Player {
 
     fn seek_to(&mut self, target: usize) {
         let target = target.min(self.total_packets);
+        let channels = self.screen.active_channels;
         self.screen = CdegScreen::new(self.screen.cdeg_enabled);
+        self.screen.active_channels = channels;
         for i in 0..target {
             if let (_, Some(ref pkt)) = self.packets[i] {
                 self.screen.apply(pkt);
@@ -166,7 +173,9 @@ impl Player {
 
     fn stop(&mut self) {
         self.sink.stop();
+        let channels = self.screen.active_channels;
         self.screen = CdegScreen::new(self.screen.cdeg_enabled);
+        self.screen.active_channels = channels;
         self.packet_idx = 0;
         self.epoch = Instant::now();
         self.paused_at = Some(Instant::now());
@@ -223,6 +232,8 @@ struct App {
     export_cancel: Option<CancelToken>,
     /// Whether to enable CD+EG decoding on supported discs.
     cdeg_enabled: bool,
+    /// Which of the 16 tile channels are active for playback and export.
+    active_channels: [bool; 16],
     /// Temp directory created when a disc was loaded from a ZIP.
     /// Deleted when a new disc is loaded or the app exits.
     zip_temp_dir: Option<PathBuf>,
@@ -239,12 +250,16 @@ impl Drop for App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_fonts(&cc.egui_ctx);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let config = Config::load();
         let library = config
             .library_path
             .as_deref()
             .map(scan_library)
             .unwrap_or_default();
+        let mut active_channels = [false; 16];
+        active_channels[0] = true;
+        active_channels[1] = true;
         let mut app = App {
             config,
             library,
@@ -257,6 +272,7 @@ impl App {
             export_progress: None,
             export_cancel: None,
             cdeg_enabled: true,
+            active_channels,
             zip_temp_dir: None,
             open_error: None,
         };
@@ -369,6 +385,30 @@ impl App {
         self.track_idx = 0;
         self.player = None;
         self.texture = None;
+
+        // Scan track 0 to find which channels are present, then set defaults:
+        // enable 0 & 1 if both exist, otherwise enable 0 only.
+        let disc_ch = if let (Some(cdg_path), Some(track)) =
+            (&self.cdg_path, self.tracks.first())
+        {
+            std::fs::read(cdg_path)
+                .map(|raw| {
+                    let off = track.cdg_offset() as usize;
+                    let end =
+                        (off + track.sectors as usize * 4 * cdg::PACKET_SIZE).min(raw.len());
+                    channels_present(&raw[off.min(raw.len())..end])
+                })
+                .unwrap_or([false; 16])
+        } else {
+            [false; 16]
+        };
+        let mut active = [false; 16];
+        active[0] = true;
+        if disc_ch[0] && disc_ch[1] {
+            active[1] = true;
+        }
+        self.active_channels = active;
+
         self.load_track(0);
     }
 
@@ -379,12 +419,14 @@ impl App {
         self.track_idx = idx;
 
         if let Some(ref cdg) = self.cdg_path {
-            let player = Player::new(track, cdg, self.cdeg_enabled);
+            let mut player = Player::new(track, cdg, self.cdeg_enabled);
+            player.screen.active_channels = self.active_channels;
             player.sink.set_volume(self.volume);
             self.player = Some(player);
         } else {
             // No .cdg — audio-only player (no video packets).
-            let player = Player::audio_only(track, self.cdeg_enabled);
+            let mut player = Player::audio_only(track, self.cdeg_enabled);
+            player.screen.active_channels = self.active_channels;
             player.sink.set_volume(self.volume);
             self.player = Some(player);
         }
@@ -492,10 +534,11 @@ impl eframe::App for App {
                         });
                         if resp.clicked() {
                             let new_enabled = !enabled;
-                            player.screen.cdeg_enabled = new_enabled;
                             self.cdeg_enabled = new_enabled;
+                            let channels = player.screen.active_channels;
                             let pos = player.packet_idx;
                             player.screen = CdegScreen::new(new_enabled);
+                            player.screen.active_channels = channels;
                             for i in 0..pos {
                                 if let (_, Some(ref pkt)) = player.packets[i] {
                                     player.screen.apply(pkt);
@@ -529,29 +572,57 @@ impl eframe::App for App {
                         }
                     } else {
                         let can_export = !self.tracks.is_empty() && self.cdg_path.is_some();
-                        if ui
-                            .add_enabled(can_export, egui::Button::new("Export"))
-                            .clicked()
-                        {
+                        let cdeg_on = self
+                            .player
+                            .as_ref()
+                            .map(|p| p.screen.cdeg_enabled)
+                            .unwrap_or(self.cdeg_enabled);
+                        let disc_title = self
+                            .cdg_path
+                            .as_ref()
+                            .and_then(|p| p.file_stem())
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "Disc".to_string());
+
+                        // Export Album — all tracks, channels 0 & 1 if both present, else 0 only
+                        if ui.add_enabled(can_export, egui::Button::new("Export Album")).clicked() {
                             if let Some(dir) = rfd::FileDialog::new()
                                 .set_title("Choose output folder for MKV files")
                                 .pick_folder()
                             {
-                                let cdeg_on = self
-                                    .player
-                                    .as_ref()
-                                    .map(|p| p.screen.cdeg_enabled)
-                                    .unwrap_or(self.cdeg_enabled);
-                                let disc_title = self
-                                    .cdg_path
-                                    .as_ref()
-                                    .and_then(|p| p.file_stem())
-                                    .map(|s| s.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| "Disc".to_string());
+                                let cp = self.player.as_ref()
+                                    .map(|p| p.channels_present)
+                                    .unwrap_or([false; 16]);
+                                let mut album_channels = [false; 16];
+                                album_channels[0] = true;
+                                if cp[0] && cp[1] {
+                                    album_channels[1] = true;
+                                }
                                 let (prog, cancel) = export::export_all_async(
                                     self.tracks.clone(),
                                     self.cdg_path.clone().unwrap(),
                                     cdeg_on,
+                                    album_channels,
+                                    dir,
+                                    disc_title.clone(),
+                                );
+                                self.export_progress = Some(prog);
+                                self.export_cancel = Some(cancel);
+                            }
+                        }
+
+                        // Export Track — current track only, with selected channels
+                        if ui.add_enabled(can_export, egui::Button::new("Export Track")).clicked() {
+                            if let Some(dir) = rfd::FileDialog::new()
+                                .set_title("Choose output folder for MKV files")
+                                .pick_folder()
+                            {
+                                let track = self.tracks[self.track_idx].clone();
+                                let (prog, cancel) = export::export_all_async(
+                                    vec![track],
+                                    self.cdg_path.clone().unwrap(),
+                                    cdeg_on,
+                                    self.active_channels,
                                     dir,
                                     disc_title,
                                 );
@@ -589,7 +660,66 @@ impl eframe::App for App {
 
             ui.separator();
 
-            // ── Row 2: transport + seek + time | volume ───────────────────
+            // ── Row 2: channel selector ───────────────────────────────────
+            ui.horizontal(|ui| {
+                let label_text = "Channels:";
+                let label_width = ui.fonts(|f| {
+                    f.layout_no_wrap(
+                        label_text.to_string(),
+                        egui::TextStyle::Body.resolve(ui.style()),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                    .x
+                });
+                let btn_w = 26.0;
+                let btn_gap = 2.0;
+                let buttons_total = 16.0 * btn_w + 15.0 * btn_gap;
+                let content_w = label_width + ui.spacing().item_spacing.x + buttons_total;
+                ui.add_space(((ui.available_width() - content_w) / 2.0).max(0.0));
+                ui.label(label_text);
+                ui.spacing_mut().item_spacing.x = btn_gap;
+                for ch in 0..16usize {
+                    let (present, active) = self.player
+                        .as_ref()
+                        .map(|p| (p.channels_present[ch], p.screen.active_channels[ch]))
+                        .unwrap_or((false, false));
+
+                    let (text_color, fill) = if present && active {
+                        (egui::Color32::BLACK, egui::Color32::from_rgb(80, 180, 80))
+                    } else {
+                        (egui::Color32::WHITE, egui::Color32::from_gray(80))
+                    };
+                    let btn = egui::Button::new(
+                        egui::RichText::new(format!("{ch}")).size(11.0).color(text_color).strong(),
+                    )
+                    .fill(fill)
+                    .corner_radius(4.0)
+                    .min_size(egui::vec2(26.0, 0.0));
+
+                    if ui.add_enabled(present, btn).clicked() {
+                        let new_active = !active;
+                        self.active_channels[ch] = new_active;
+                        if let Some(ref mut player) = self.player {
+                            player.screen.active_channels[ch] = new_active;
+                            let channels = player.screen.active_channels;
+                            let cdeg = player.screen.cdeg_enabled;
+                            let pos = player.packet_idx;
+                            player.screen = CdegScreen::new(cdeg);
+                            player.screen.active_channels = channels;
+                            for i in 0..pos {
+                                if let (_, Some(ref pkt)) = player.packets[i] {
+                                    player.screen.apply(pkt);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.separator();
+
+            // ── Row 3: transport + seek + time | volume ───────────────────
             ui.horizontal(|ui| {
                 if let Some(ref mut player) = self.player {
                     let play_label = if player.state == PlayState::Playing {
@@ -760,7 +890,8 @@ impl eframe::App for App {
                                 ui.label(
                                     egui::RichText::new("Library")
                                         .size(20.0)
-                                        .color(egui::Color32::WHITE),
+                                        .color(egui::Color32::WHITE)
+                                        .strong(),
                                 );
                                 ui.add_space(10.0);
                                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1037,7 +1168,7 @@ fn extract_disc_7z(path: &Path) -> Result<(PathBuf, PathBuf), String> {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn app_icon() -> egui::IconData {
-    let bytes = include_bytes!("../Logo/CDG Logo.png");
+    let bytes = include_bytes!("../logos/CDG Logo.png");
     let img = image::load_from_memory(bytes)
         .expect("CDG Logo.png is a valid PNG")
         .into_rgba8();

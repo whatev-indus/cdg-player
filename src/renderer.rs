@@ -1,4 +1,4 @@
-use crate::cdg::{AnyPacket, CdegInstruction, CdegPacket, Instruction, Packet};
+use crate::cdg::{AnyPacket, CdegInstruction, CdegPacket, Instruction, Packet, tile_channel};
 
 pub const WIDTH: usize = 300;
 pub const HEIGHT: usize = 216;
@@ -249,17 +249,23 @@ pub struct CdegScreen {
     pub write_mode: WriteMode,
     pub display_mode: DisplayMode,
     pub cdeg_enabled: bool,
+    /// Which of the 16 tile channels are enabled for rendering.
+    pub active_channels: [bool; 16],
     clut256: Box<[CdegColor; 256]>,
 }
 
 impl CdegScreen {
     pub fn new(cdeg_enabled: bool) -> Self {
+        let mut active_channels = [false; 16];
+        active_channels[0] = true;
+        active_channels[1] = true;
         Self {
             primary: Screen::new(),
             secondary: Screen::new(),
             write_mode: WriteMode::Primary,
             display_mode: DisplayMode::Primary,
             cdeg_enabled,
+            active_channels,
             clut256: Box::new([CdegColor::default(); 256]),
         }
     }
@@ -289,6 +295,11 @@ impl CdegScreen {
     // ── Item 1 dispatch ───────────────────────────────────────────────────────
 
     fn apply_item1(&mut self, pkt: &Packet) {
+        if matches!(pkt.instruction, Instruction::TileBlock | Instruction::TileBlockXor) {
+            if !self.active_channels[tile_channel(&pkt.data)] {
+                return;
+            }
+        }
         if matches!(self.display_mode, DisplayMode::Color256) {
             // 256-color mode: primary gets normal writes; secondary gets special preset handling.
             match self.write_mode {
@@ -350,8 +361,16 @@ impl CdegScreen {
         match pkt.instruction {
             CdegInstruction::MemoryControl => unreachable!(),
 
-            CdegInstruction::SetFont => self.secondary.tile_block(&pkt.data, false),
-            CdegInstruction::XorFont => self.secondary.tile_block(&pkt.data, true),
+            CdegInstruction::SetFont => {
+                if self.active_channels[tile_channel(&pkt.data)] {
+                    self.secondary.tile_block(&pkt.data, false);
+                }
+            }
+            CdegInstruction::XorFont => {
+                if self.active_channels[tile_channel(&pkt.data)] {
+                    self.secondary.tile_block(&pkt.data, true);
+                }
+            }
 
             CdegInstruction::LoadClut256High { start } => {
                 if !is_256color {

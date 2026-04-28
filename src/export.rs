@@ -51,6 +51,7 @@ pub fn export_all_async(
     tracks: Vec<Track>,
     cdg_path: PathBuf,
     cdeg_enabled: bool,
+    active_channels: [bool; 16],
     output_dir: PathBuf,
     disc_title: String,
 ) -> (Progress, CancelToken) {
@@ -114,6 +115,7 @@ pub fn export_all_async(
                 &packets,
                 &audio,
                 cdeg_on,
+                active_channels,
                 &out_path,
                 &prog,
                 idx,
@@ -142,6 +144,7 @@ fn run_export(
     packets: &[(u32, Option<AnyPacket>)],
     audio: &[i16],
     cdeg_on: bool,
+    active_channels: [bool; 16],
     out_path: &Path,
     progress: &Progress,
     track_idx: usize,
@@ -223,6 +226,7 @@ fn run_export(
     // ── Render and pipe frames ──────────────────────────────────────────────
     let total_frames = (packets.len() / PACKETS_PER_FRAME).max(1);
     let mut screen = CdegScreen::new(cdeg_on);
+    screen.active_channels = active_channels;
     let mut pkt_idx = 0;
     let mut frame = 0usize;
     let mut rgb_buf = vec![0u8; WIDTH * HEIGHT * 3];

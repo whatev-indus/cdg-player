@@ -110,6 +110,37 @@ pub enum AnyPacket {
     Item2(CdegPacket),
 }
 
+/// Extract the 4-bit channel number from a tile packet's first two data bytes.
+/// Bits 5-4 of data[0] supply the high 2 bits; bits 5-4 of data[1] supply the low 2 bits.
+pub fn tile_channel(data: &[u8; 16]) -> usize {
+    (((data[0] & 0x30) >> 2) | ((data[1] & 0x30) >> 4)) as usize
+}
+
+/// Scan a raw CDG byte slice and return a 16-element mask of which channels
+/// have at least one TileBlock / XorFont packet addressed to them.
+pub fn channels_present(data: &[u8]) -> [bool; 16] {
+    let mut present = [false; 16];
+    for (_, pkt) in PacketIter::new(data) {
+        match pkt {
+            Some(AnyPacket::Item1(p))
+                if matches!(p.instruction, Instruction::TileBlock | Instruction::TileBlockXor) =>
+            {
+                present[tile_channel(&p.data)] = true;
+            }
+            Some(AnyPacket::Item2(p))
+                if matches!(
+                    p.instruction,
+                    CdegInstruction::SetFont | CdegInstruction::XorFont
+                ) =>
+            {
+                present[tile_channel(&p.data)] = true;
+            }
+            _ => {}
+        }
+    }
+    present
+}
+
 // ── Packet iterator ───────────────────────────────────────────────────────────
 
 /// Iterator that yields parsed packets from a raw `.cdg` byte slice.
